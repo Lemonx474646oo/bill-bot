@@ -193,7 +193,12 @@ def build_stats_report(config) -> str:
     lines = [f"📈 إحصائيات الأداء\n🕐 {now}\n"]
 
     for coin_id, info in config["coins"].items():
-        stats = get_stats(coin_id)
+        try:
+            stats = get_stats(coin_id)
+        except Exception as e:
+            lines.append(f"⚠️ تعذر جلب إحصائيات {info['label']}: {e}")
+            continue
+
         if not stats:
             lines.append(f"⚠️ تعذر جلب إحصائيات {info['label']}")
             continue
@@ -316,17 +321,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "show_stats":
         await query.message.reply_text("بيحسب الإحصائيات دلوقتي... ثواني")
-        config = load_config()
-        text = build_stats_report(config)
-        await query.message.reply_text(text)
+        try:
+            config = load_config()
+            text = build_stats_report(config)
+            await query.message.reply_text(text)
+        except Exception as e:
+            await query.message.reply_text(f"حصل خطأ أثناء جلب الإحصائيات: {e}")
 
     elif query.data == "show_news":
         await query.message.reply_text("بيجيب آخر الأخبار دلوقتي... ثواني")
-        config = load_config()
-        text = build_news_report(config)
-        # تليجرام بيرفض الرسائل الأطول من 4096 حرف، فهنقسمها لو طويلة
-        for i in range(0, len(text), 3500):
-            await query.message.reply_text(text[i:i + 3500])
+        try:
+            config = load_config()
+            text = build_news_report(config)
+            for i in range(0, len(text), 3500):
+                await query.message.reply_text(text[i:i + 3500])
+        except Exception as e:
+            await query.message.reply_text(f"حصل خطأ أثناء جلب الأخبار: {e}")
 
     elif query.data == "send_now":
         await query.message.reply_text("جاري الإرسال...")
