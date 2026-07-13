@@ -54,34 +54,46 @@ def save_config(config):
 
 
 # ================== جلب الأسعار ==================
+import xml.etree.ElementTree as ET
+
+NEWS_RSS_FEEDS = [
+    "https://cointelegraph.com/rss",
+    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+]
+
+
+def fetch_rss_items(feed_url: str):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    r = requests.get(feed_url, headers=headers, timeout=15)
+    r.raise_for_status()
+    root = ET.fromstring(r.content)
+    items = []
+    for item in root.findall(".//item"):
+        title = item.findtext("title", default="")
+        link = item.findtext("link", default="")
+        items.append({"title": title, "url": link, "source": feed_url.split("/")[2]})
+    return items
+
+
 def get_news(label: str, max_items: int = 5):
     """
-    بيجيب آخر أخبار الكريبتو العامة، وبيحاول يفلتر الأخبار اللي بتذكر اسم العملة.
-    لو مفيش أخبار خاصة بالعملة، بيرجع أهم الأخبار العامة في السوق بدلها.
+    بيجيب آخر أخبار الكريبتو من RSS feeds مجانية، وبيحاول يفلتر الأخبار
+    اللي بتذكر اسم العملة. لو مفيش أخبار خاصة، بيرجع أهم الأخبار العامة.
     """
-    url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN"
-    r = requests.get(url, timeout=15)
-    r.raise_for_status()
-    data = r.json().get("Data", [])
+    all_items = []
+    for feed in NEWS_RSS_FEEDS:
+        try:
+            all_items.extend(fetch_rss_items(feed))
+        except Exception:
+            continue
 
     label_lower = label.lower()
-    specific = [
-        item for item in data
-        if label_lower in item.get("title", "").lower()
-        or label_lower in item.get("body", "").lower()
-    ]
+    specific = [item for item in all_items if label_lower in item["title"].lower()]
 
-    chosen = specific if specific else data
+    chosen = specific if specific else all_items
     chosen = chosen[:max_items]
 
-    return [
-        {
-            "title": item.get("title", ""),
-            "url": item.get("url", ""),
-            "source": item.get("source", ""),
-        }
-        for item in chosen
-    ], bool(specific)
+    return chosen, bool(specific)
 
 
 def build_news_report(config) -> str:
