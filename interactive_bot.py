@@ -54,6 +54,70 @@ def save_config(config):
 
 
 # ================== جلب الأسعار ==================
+def get_news(label: str, max_items: int = 5):
+    """
+    بيجيب آخر أخبار الكريبتو العامة، وبيحاول يفلتر الأخبار اللي بتذكر اسم العملة.
+    لو مفيش أخبار خاصة بالعملة، بيرجع أهم الأخبار العامة في السوق بدلها.
+    """
+    url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN"
+    r = requests.get(url, timeout=15)
+    r.raise_for_status()
+    data = r.json().get("Data", [])
+
+    label_lower = label.lower()
+    specific = [
+        item for item in data
+        if label_lower in item.get("title", "").lower()
+        or label_lower in item.get("body", "").lower()
+    ]
+
+    chosen = specific if specific else data
+    chosen = chosen[:max_items]
+
+    return [
+        {
+            "title": item.get("title", ""),
+            "url": item.get("url", ""),
+            "source": item.get("source", ""),
+        }
+        for item in chosen
+    ], bool(specific)
+
+
+def build_news_report(config) -> str:
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    lines = [f"📰 آخر الأخبار\n🕐 {now}\n"]
+
+    seen_labels = set()
+    for coin_id, info in config["coins"].items():
+        label = info["label"]
+        if label in seen_labels:
+            continue
+        seen_labels.add(label)
+
+        try:
+            news_items, is_specific = get_news(label)
+        except Exception as e:
+            lines.append(f"⚠️ تعذر جلب أخبار {label}: {e}")
+            continue
+
+        header = (
+            f"أخبار خاصة بـ {label}:" if is_specific
+            else f"مفيش أخبار خاصة بـ {label} حاليًا، دي أهم أخبار السوق العام:"
+        )
+        lines.append(header)
+
+        if not news_items:
+            lines.append("لا توجد أخبار متاحة حاليًا.\n")
+            continue
+
+        for item in news_items:
+            lines.append(f"- {item['title']} ({item['source']})\n  {item['url']}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def get_price(coingecko_id: str):
     url = (
         "https://api.coingecko.com/api/v3/simple/price"
@@ -70,9 +134,70 @@ def get_price(coingecko_id: str):
     }
 
 
+def get_stats(coingecko_id: str):
+    """
+    بيرجع نسبة التغيير خلال يوم / أسبوع / شهر باستخدام بيانات آخر 30 يوم
+    """
+    url = (
+        f"https://api.coingecko.com/api/v3/coins/{coingecko_id}/market_chart"
+        "?vs_currency=usd&days=30&interval=daily"
+    )
+    r = requests.get(url, timeout=20)
+    r.raise_for_status()
+    data = r.json()
+    prices = data.get("prices", [])
+    if not prices:
+        return None
+
+    current_price = prices[-1][1]
+
+    def price_before(days_ago):
+        idx = max(0, len(prices) - 1 - days_ago)
+        return prices[idx][1]
+
+    price_1d = price_before(1)
+    price_7d = price_before(7)
+    price_30d = price_before(30)
+
+    def pct_change(old, new):
+        if old == 0:
+            return 0
+        return ((new - old) / old) * 100
+
+    return {
+        "current_price": current_price,
+        "change_1d": pct_change(price_1d, current_price),
+        "change_7d": pct_change(price_7d, current_price),
+        "change_30d": pct_change(price_30d, current_price),
+    }
+
+
+def build_stats_report(config) -> str:
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    lines = [f"📈 إحصائيات الأداء\n🕐 {now}\n"]
+
+    for coin_id, info in config["coins"].items():
+        stats = get_stats(coin_id)
+        if not stats:
+            lines.append(f"⚠️ تعذر جلب إحصائيات {info['label']}")
+            continue
+
+        def arrow(v):
+            return "🟢⬆️" if v >= 0 else "🔴⬇️"
+
+        lines.append(
+            f"{info['label']} — السعر الحالي: ${stats['current_price']:.6f}\n"
+            f"يومي: {arrow(stats['change_1d'])} {stats['change_1d']:.2f}%\n"
+            f"أسبوعي: {arrow(stats['change_7d'])} {stats['change_7d']:.2f}%\n"
+            f"شهري: {arrow(stats['change_30d'])} {stats['change_30d']:.2f}%\n"
+        )
+
+    return "\n".join(lines)
+
+
 def build_report(config) -> str:
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    lines = [f"📊 *تحديث أسعار العملات*\n🕐 {now}\n"]
+    lines = [f"📊 تحديث أسعار العملات\n🕐 {now}\n"]
 
     for coin_id, info in config["coins"].items():
         data = get_price(coin_id)
@@ -87,9 +212,9 @@ def build_report(config) -> str:
         value = price * amount
 
         lines.append(
-            f"*{info['label']}*\n"
-            f"السعر: `${price:.6f}` {arrow} {change:.2f}%\n"
-            f"قيمة {amount:,} {info['label']}: `${value:,.2f}`\n"
+            f"{info['label']}\n"
+            f"السعر: ${price:.6f} {arrow} {change:.2f}%\n"
+            f"قيمة {amount:,} {info['label']}: ${value:,.2f}\n"
         )
 
     return "\n".join(lines)
@@ -99,7 +224,17 @@ def build_report(config) -> str:
 async def scheduled_job(context: ContextTypes.DEFAULT_TYPE):
     config = load_config()
     text = build_report(config)
-    await context.bot.send_message(chat_id=CHANNEL_ID, text=text, parse_mode="Markdown")
+    await context.bot.send_message(chat_id=CHANNEL_ID, text=text)
+
+
+async def daily_news_job(context: ContextTypes.DEFAULT_TYPE):
+    config = load_config()
+    try:
+        news_text = build_news_report(config)
+        for i in range(0, len(news_text), 3500):
+            await context.bot.send_message(chat_id=CHANNEL_ID, text=news_text[i:i + 3500])
+    except Exception as e:
+        print(f"تحذير: فشل جلب الأخبار اليومية: {e}")
 
 
 def reschedule(app: Application, minutes: int):
@@ -118,6 +253,8 @@ def main_menu():
         [InlineKeyboardButton("⏱ تغيير مدة التنبيه", callback_data="set_interval")],
         [InlineKeyboardButton("📋 عرض الإعدادات الحالية", callback_data="show_config")],
         [InlineKeyboardButton("🚀 إرسال تحديث الآن", callback_data="send_now")],
+        [InlineKeyboardButton("📈 إحصائيات يومي/أسبوعي/شهري", callback_data="show_stats")],
+        [InlineKeyboardButton("📰 آخر الأخبار", callback_data="show_news")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -140,10 +277,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["awaiting"] = "add_coin"
         await query.message.reply_text(
             "ابعتلي بيانات العملة بالشكل ده في رسالة واحدة:\n\n"
-            "`coingecko_id اسم_مختصر الكمية`\n\n"
-            "مثال:\n`billions-network BILL 1350`\n\n"
-            "(الـ coingecko_id تلاقيه في رابط العملة على coingecko.com)",
-            parse_mode="Markdown",
+            "coingecko_id اسم_مختصر الكمية\n\n"
+            "مثال:\nbillions-network BILL 1350\n\n"
+            "(الـ coingecko_id تلاقيه في رابط العملة على coingecko.com)"
         )
 
     elif query.data == "set_interval":
@@ -162,11 +298,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.message.reply_text(text)
 
+    elif query.data == "show_stats":
+        await query.message.reply_text("بيحسب الإحصائيات دلوقتي... ثواني")
+        config = load_config()
+        text = build_stats_report(config)
+        await query.message.reply_text(text)
+
+    elif query.data == "show_news":
+        await query.message.reply_text("بيجيب آخر الأخبار دلوقتي... ثواني")
+        config = load_config()
+        text = build_news_report(config)
+        # تليجرام بيرفض الرسائل الأطول من 4096 حرف، فهنقسمها لو طويلة
+        for i in range(0, len(text), 3500):
+            await query.message.reply_text(text[i:i + 3500])
+
     elif query.data == "send_now":
         await query.message.reply_text("جاري الإرسال...")
         config = load_config()
         text = build_report(config)
-        await context.bot.send_message(chat_id=CHANNEL_ID, text=text, parse_mode="Markdown")
+        await context.bot.send_message(chat_id=CHANNEL_ID, text=text)
         await query.message.reply_text("تم الإرسال للقناة ✅")
 
 
@@ -248,6 +398,11 @@ def main():
 
     config = load_config()
     reschedule(app, config["interval_minutes"])
+
+    # إرسال الأخبار مرة واحدة يوميًا (كل 24 ساعة من وقت التشغيل)
+    app.job_queue.run_repeating(
+        daily_news_job, interval=24 * 60 * 60, first=60, name="daily_news"
+    )
 
     print("البوت شغال... اضغط Ctrl+C للإيقاف")
     app.run_polling()
