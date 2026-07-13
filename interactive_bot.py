@@ -13,6 +13,8 @@
 
 import json
 import os
+import re
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
 import requests
@@ -54,8 +56,6 @@ def save_config(config):
 
 
 # ================== جلب الأسعار ==================
-import xml.etree.ElementTree as ET
-
 NEWS_RSS_FEEDS = [
     "https://cointelegraph.com/rss",
     "https://www.coindesk.com/arc/outboundfeeds/rss/",
@@ -78,7 +78,8 @@ def fetch_rss_items(feed_url: str):
 def get_news(label: str, max_items: int = 5):
     """
     بيجيب آخر أخبار الكريبتو من RSS feeds مجانية، وبيحاول يفلتر الأخبار
-    اللي بتذكر اسم العملة. لو مفيش أخبار خاصة، بيرجع أهم الأخبار العامة.
+    اللي بتذكر اسم العملة (ككلمة كاملة، مش كجزء من كلمة تانية).
+    لو مفيش أخبار خاصة، بيرجع أهم الأخبار العامة.
     """
     all_items = []
     for feed in NEWS_RSS_FEEDS:
@@ -87,8 +88,8 @@ def get_news(label: str, max_items: int = 5):
         except Exception:
             continue
 
-    label_lower = label.lower()
-    specific = [item for item in all_items if label_lower in item["title"].lower()]
+    pattern = re.compile(r"\b" + re.escape(label) + r"\b", re.IGNORECASE)
+    specific = [item for item in all_items if pattern.search(item["title"])]
 
     chosen = specific if specific else all_items
     chosen = chosen[:max_items]
