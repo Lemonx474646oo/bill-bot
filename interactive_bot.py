@@ -75,12 +75,14 @@ def fetch_rss_items(feed_url: str):
     return items
 
 
-def get_news(label: str, max_items: int = 5):
+def get_news(label: str, max_items: int = 5, search_term: str = None):
     """
     بيجيب آخر أخبار الكريبتو من RSS feeds مجانية، وبيحاول يفلتر الأخبار
     اللي بتذكر اسم العملة (ككلمة كاملة، مش كجزء من كلمة تانية).
+    search_term: نص أدق للبحث بيه (زي الاسم الكامل) لو الاسم المختصر شائع.
     لو مفيش أخبار خاصة، بيرجع أهم الأخبار العامة.
     """
+    term = search_term if search_term else label
     all_items = []
     for feed in NEWS_RSS_FEEDS:
         try:
@@ -88,7 +90,7 @@ def get_news(label: str, max_items: int = 5):
         except Exception:
             continue
 
-    pattern = re.compile(r"\b" + re.escape(label) + r"\b", re.IGNORECASE)
+    pattern = re.compile(r"\b" + re.escape(term) + r"\b", re.IGNORECASE)
     specific = [item for item in all_items if pattern.search(item["title"])]
 
     chosen = specific if specific else all_items
@@ -109,7 +111,8 @@ def build_news_report(config) -> str:
         seen_labels.add(label)
 
         try:
-            news_items, is_specific = get_news(label)
+            search_term = coin_id.replace("-", " ")
+            news_items, is_specific = get_news(label, search_term=search_term)
         except Exception as e:
             lines.append(f"⚠️ تعذر جلب أخبار {label}: {e}")
             continue
